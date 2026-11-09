@@ -67,6 +67,10 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute
 .tg{display:grid;gap:6px}
 .me{font:inherit;font-size:13px;padding:6px 10px;border-radius:6px;border:1px dashed var(--line);background:transparent;color:var(--fg);cursor:pointer;width:100%}
 .me:hover{border-color:var(--blue);color:var(--blue)}
+.me.feito{border-style:solid;border-color:var(--accent);color:var(--accent);background:var(--accent-soft);font-weight:600}
+.me-dica{font-size:12px;color:var(--muted);line-height:1.35}
+.me-dica b{color:var(--fg)}
+.me-dica .sel{user-select:all}
 .rec:disabled{opacity:.45;cursor:not-allowed}
 .rec.sec{background:transparent;color:var(--blue)}
 .conf{display:grid;gap:6px}
@@ -276,7 +280,17 @@ $("#out").addEventListener("click",e=>{
   const id=row.dataset.id;
   if(e.target.closest("[data-me]")){
     const r=linhas.find(x=>x.id===id),rq=requisicao(r);
-    copiar(rq).then(ok=>msg(ok?`Requisição ${rq} copiada. Com o SAP aberto, faça duplo clique em "ME21N - Requisicao.vbs": abre a ME21N, procura a requisição e adota-a para o pedido.`:`Copie a requisição ${rq} e, no SAP, abra /nME21N.`,"ok"));
+    const bt=e.target.closest("[data-me]");
+    copiar(rq).then(ok=>{
+      bt.classList.add("feito");
+      bt.innerHTML=ok?`✓ Requisição ${rq} copiada`:`Requisição ${rq}`;
+      let dica=bt.parentElement.querySelector(".me-dica");
+      if(!dica){dica=document.createElement("div");dica.className="me-dica";bt.after(dica);}
+      dica.innerHTML=ok
+        ?`Agora, com o SAP aberto, faça duplo clique em <b>ME21N - Requisicao.vbs</b> (ambiente de trabalho). Ou no SAP: <b>/nME21N</b> e cole com Ctrl+V.`
+        :`Não foi possível copiar. Selecione o número <b class="sel">${rq}</b>, copie (Ctrl+C) e, no SAP, abra <b>/nME21N</b>.`;
+      setTimeout(()=>{bt.classList.remove("feito");bt.textContent="Criar pedido ME21N";},8000);
+    });
     return;
   }
   if(e.target.closest("[data-env-ok]")){confirmar.delete(id);
