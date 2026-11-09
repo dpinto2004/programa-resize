@@ -380,12 +380,13 @@ async function aplicar(gerar,origem){
     const f1novo=(limpo.ops.find(o=>o.id==="f-1")||{}).data,f1atual=linhas.find(x=>x.id==="f-1");
     const novaSemana=!!(meta.semana&&limpo.meta.semana&&limpo.meta.semana!==meta.semana&&f1novo&&f1atual&&norm(f1novo.op)!==norm(f1atual.op));
     const res=novaSemana?limpo:gerar(linhas);
-    const sair=novaSemana?linhas.filter(x=>!res.ops.some(o=>o.id===x.id)).map(x=>x.id):[];
-    if(novaSemana){
-      res.ops=res.ops.map(o=>({...o,tipo:"set"}));
+    const sair=linhas.filter(x=>!res.ops.some(o=>o.id===x.id)).map(x=>x.id);
+    if(novaSemana) res.ops=res.ops.map(o=>({...o,tipo:"set"}));
+    if(res.ops.length&&sair.length){
       if(db){for(const id of sair) await db.doc("linhas/"+id).delete();}
-      else linhas=[];
+      else linhas=linhas.filter(x=>!sair.includes(x.id));
     }
+    if(novaSemana&&!db) linhas=[];
     if(db){
       let k=0;
       for(const o of res.ops){
