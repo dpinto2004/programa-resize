@@ -189,17 +189,17 @@ const late=r=>!r.terminado&&r.dataPrevista&&r.dataPrevista<hoje();
 const soon=r=>!r.terminado&&!late(r)&&r.dataPrevista&&r.dataPrevista<=daqui(3);
 
 const PRESTADORES=["JPL","Castanheira","Firinhos","Liberty","Imobrandão","CPI"];
-const ALIAS={cpi:"CPI",jpl:"JPL",cast:"Castanheira",castanheira:"Castanheira",fir:"Firinhos",firinhos:"Firinhos",liberty:"Liberty",imobrandao:"Imobrandão","imobrandão":"Imobrandão",imob:"Imobrandão"};
+const ALIAS={cpi:"CPI",jpl:"JPL",cast:"Castanheira",castan:"Castanheira",castanheira:"Castanheira",fir:"Firinhos",firinhos:"Firinhos",liberty:"Liberty",imobrandao:"Imobrandão","imobrandão":"Imobrandão",imob:"Imobrandão"};
 const nomePrest=p=>{const t=(p||"").trim();return ALIAS[t.toLowerCase()]||t;};
 const estado=r=>{const l=(r.local||"").trim().toUpperCase();return r.terminado||l==="CSP1"?"rec":l==="PRESTADOR"?"ps":"env";};
-const RX_PREST=/\s*(?:para\s+o\s+|no\s+|na\s+)?\b(JPL|CPI|FIR|Firinhos|CAST|Castanheira|Liberty|Imobrand[aã]o)\b/gi;
+const RX_PREST=/\s*(?:para\s+o\s+|no\s+|na\s+)?\b(JPL|CPI|FIR|Firinhos|CAST|CASTAN|Castanheira|Liberty|Imobrand[aã]o)\b/gi;
 const semPrest=t=>String(t||"").replace(RX_PREST,"").replace(/[ \t]{2,}/g," ").trim();
 let confirmar=new Set();
 const requisicao=r=>{const m=String(r.op||"").match(/\b(10\d{8})\b/);return m?m[1]:"";};
 async function copiar(txt){try{await navigator.clipboard.writeText(txt);return true;}catch(e){const t=document.createElement("textarea");t.value=txt;document.body.appendChild(t);t.select();let ok=false;try{ok=document.execCommand("copy");}catch(_){}t.remove();return ok;}}
 function renderMeta(){
   $("#semana").textContent=meta.semana?"· "+meta.semana:"";
-  $("#nota").textContent=semPrest(String(meta.nota||"").replace(/\s+para\s+o\s+(JPL|CPI|FIR|Firinhos|CAST|Castanheira|Liberty|Imobrand[aã]o)\b/gi," para o prestador definido")); $("#nota").hidden=!meta.nota;
+  $("#nota").textContent=semPrest(String(meta.nota||"").replace(/\s+para\s+o\s+(JPL|CPI|FIR|Firinhos|CAST|CASTAN|Castanheira|Liberty|Imobrand[aã]o)\b/gi," para o prestador definido")); $("#nota").hidden=!meta.nota;
   const n=meta.notas||[]; $("#notas").hidden=!n.length;
   $("#notasBody").innerHTML=n.map(x=>`<div><b>${esc(x.tema)}</b><span>${esc(x.texto)}</span></div>`).join("");
 }
