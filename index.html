@@ -434,13 +434,20 @@ async function escolherFicheiroSP(){
   for(const m of lista.matchAll(/(.+?\.xls[xm]) \(file, \d+ bytes\) (file:\/\/\/\S+?\/[0-9A-Z]{34})/g)){
     const nome=m[1].trim();if(!/resize/i.test(nome)||nome.startsWith("~$"))continue;cands.push({nome,uri:m[2],data:""});
   }
-  if(!cands.length) throw new Error("não encontrei ficheiros Resize na pasta "+SP_PASTA);
+  cands.push({nome:"Resize.xlsx",uri:"file:///"+SP_DRIVE+"/013ZNT3ICV4Y5OB2AO4BAJU7YPGLSXKAB6",data:"",raiz:true});
   try{
     const r=await mcp.callTool("Microsoft 365","sharepoint_search",{query:"Resize",folderName:"09 - Cortes",fileType:"xlsx",limit:50},{cache:false});
     const txt=(r.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
     for(const o of objetosJSON(txt)){const c=cands.find(x=>x.uri===o.uri||x.nome===o.name);if(c&&o.lastModifiedDateTime)c.data=o.lastModifiedDateTime;}
   }catch(e){}
+  try{
+    const r2=await mcp.callTool("Microsoft 365","sharepoint_search",{query:"filename:Resize.xlsx",limit:5},{cache:false});
+    const t2=(r2.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+    for(const o of objetosJSON(t2)) if(o.name==="Resize.xlsx"&&o.lastModifiedDateTime&&/\/Shared Documents\/Resize\.xlsx$/.test(o.webUrl||"")){const c=cands.find(x=>x.raiz);c.data=o.lastModifiedDateTime;}
+  }catch(e){}
+  if(cands.every(c=>c.raiz)) cands[0].data=cands[0].data||"9999";
   const maxSemDatada=Math.max(0,...cands.filter(c=>c.data).map(c=>semanaMax(c.nome)));
+  /* a raiz sem data conhecida fica atrás de ficheiros datados; com data, compete pela data */
   cands.sort((a,b)=>{
     const an=!a.data&&semanaMax(a.nome)>maxSemDatada,bn=!b.data&&semanaMax(b.nome)>maxSemDatada;
     if(an!==bn) return an?-1:1;
@@ -504,7 +511,7 @@ async function atualizarSP_(auto){
   b.disabled=true;msg("A ler o Resize.xlsx no SharePoint…");
   try{
     await escolherFicheiroSP();
-    msg("A ler "+spNome+" (o mais recente da pasta 09 - Cortes)…");
+    msg("A ler "+spNome+" (o Resize mais recente do SharePoint)…");
     const idx=await lerSP({uri:SP_URI,startPage:1,endPage:1});
     const lista=[...idx.matchAll(/^(\d+)\. (.+)$/gm)].map(m=>({n:Number(m[1]),nome:m[2].trim()}));
     const sch=lista.find(x=>/schedule|resize/i.test(x.nome)&&!/^\d+$/.test(x.nome));
@@ -650,7 +657,7 @@ async function gravarEAtualizar(id,patch,texto,okMsg){
     $("#saving").textContent="";
   } else {
     guardar(id,patch);
-    msg(r.folha+": "+okMsg+(window.__modoLigado?" Para gravar no Excel, ligue primeiro o programa à pasta 09 - Cortes (⟳ Ligar).":""),"ok");
+    msg(r.folha+": "+okMsg+(window.__modoLigado?" Para gravar no Excel, ligue primeiro o programa à pasta do SharePoint (⟳ Ligar).":""),"ok");
   }
 }
 
@@ -668,12 +675,17 @@ async function escolherPasta(){
   return d;
 }
 async function maisRecenteNaPasta(){
+  /* procura na pasta escolhida e, se existir, em 2026 › 09 - Cortes; usa o Resize…xlsx alterado mais recentemente */
   let melhor=null,melhorMod=-1;
-  for await (const [nome,h] of pastaLigada.entries()){
-    if(h.kind!=="file"||!/\.xls[xm]$/i.test(nome)||nome.startsWith("~$")) continue;
-    if(!/resize/i.test(nome)) continue;
-    const f=await h.getFile();
-    if(f.lastModified>melhorMod){melhorMod=f.lastModified;melhor=h;}
+  const pastas=[pastaLigada];
+  try{const a=await pastaLigada.getDirectoryHandle(String(new Date().getFullYear()));pastas.push(await a.getDirectoryHandle("09 - Cortes"));}catch(_){}
+  for(const p of pastas){
+    for await (const [nome,h] of p.entries()){
+      if(h.kind!=="file"||!/\.xls[xm]$/i.test(nome)||nome.startsWith("~$")) continue;
+      if(!/resize/i.test(nome)||/cortes orientados/i.test(nome)) continue;
+      const f=await h.getFile();
+      if(f.lastModified>melhorMod){melhorMod=f.lastModified;melhor=h;}
+    }
   }
   return melhor;
 }
@@ -699,11 +711,11 @@ async function atualizarLigado(clique){
     $("#ligadoInfo").innerHTML=(pastaLigada?"Pasta "+esc(pastaLigada.name)+" · a usar ":"Ligado a ")+"<b>"+esc(f.name)+"</b> · gravado "+quando+(velho?' <b style="color:var(--late)">· sem alterações há mais de 7 dias</b>':"");
   }catch(e){
     if(e&&e.name==="AbortError") return;
-    if(e&&e.name==="NotFoundError"){pastaLigada=null;ficheiroLigado=null;mostrarLigar();msg("A pasta ou o ficheiro ligado já não existe. Carregue em ⟳ Ligar e escolha outra vez a pasta 09 - Cortes.","bad");return;}
+    if(e&&e.name==="NotFoundError"){pastaLigada=null;ficheiroLigado=null;mostrarLigar();msg("A pasta ou o ficheiro ligado já não existe. Carregue em ⟳ Ligar e escolha outra vez a pasta Documents do site PI.","bad");return;}
     msg("Não foi possível ler: "+(e.message||e),"bad");
   }
 }
-function mostrarLigar(){ $("#btnSP").textContent=(pastaLigada||ficheiroLigado)?"⟳ Atualizar":"⟳ Ligar à pasta 09 - Cortes"; }
+function mostrarLigar(){ $("#btnSP").textContent=(pastaLigada||ficheiroLigado)?"⟳ Atualizar":"⟳ Ligar à pasta do SharePoint"; }
 async function modoFicheiroLigado(){
   if(!window.showDirectoryPicker){ $("#btnSP").hidden=true;$("#btnImport").classList.add("primary");$("#btnImport").textContent="⟳ Atualizar com o Excel";msg("Este browser não permite ligar à pasta. Use o Edge ou o Chrome.","bad");return; }
   window.__modoLigado=true;
@@ -712,7 +724,7 @@ async function modoFicheiroLigado(){
   try{pastaCopias=await IDB.get("pastaCopias")||null;}catch(e){pastaCopias=null;}
   mostrarLigar();
   const info=document.createElement("span");info.id="ligadoInfo";info.className="saving";$("#btnSP").before(info);
-  const mudar=document.createElement("button");mudar.type="button";mudar.className="btn";mudar.textContent="Mudar pasta";mudar.title="Escolher a pasta 2026 > 09 - Cortes (sincronizada do SharePoint)";
+  const mudar=document.createElement("button");mudar.type="button";mudar.className="btn";mudar.textContent="Mudar pasta";mudar.title="Escolher a pasta Documents do site PI (sincronizada do SharePoint)";
   $("#btnSP").after(mudar);
   mudar.addEventListener("click",async()=>{try{await escolherPasta();ultimoMod=0;await atualizarLigado(true);}catch(e){if(e&&e.name!=="AbortError")msg("Não foi possível ligar: "+(e.message||e),"bad");}});
   if(pastaLigada){ info.textContent="Pasta "+pastaLigada.name; setTimeout(()=>atualizarLigado(false),800); }
@@ -809,8 +821,8 @@ document.addEventListener("drop",e=>{e.preventDefault();document.body.classList.
   if(!db){
     try{linhas=JSON.parse(localStorage.getItem("resize-linhas")||"[]");meta=JSON.parse(localStorage.getItem("resize-meta")||"{}");}catch(e){linhas=[];}
     renderMeta();render();
-    if(!linhas.length&&window.SEED&&SEED.linhas){linhas=SEED.linhas.map(x=>({...x}));meta={...SEED.meta};renderMeta();render();msg("Dados do Resize.xlsx de "+SEED.data+". Carregue em ⟳ Ligar à pasta 09 - Cortes (uma vez) para atualizar sempre a partir do SharePoint.");}
-    else if(!linhas.length) msg(window.__modoLigado?"Carregue em ⟳ Ligar à pasta 09 - Cortes e escolha a pasta 2026 › 09 - Cortes sincronizada do SharePoint (só da primeira vez). O programa usa sempre o ficheiro mais recente dessa pasta.":"Carregue em ⟳ Atualizar com o Excel e escolha o Resize.xlsx (ou arraste-o para aqui).");
+    if(!linhas.length&&window.SEED&&SEED.linhas){linhas=SEED.linhas.map(x=>({...x}));meta={...SEED.meta};renderMeta();render();msg("Dados do Resize.xlsx de "+SEED.data+". Carregue em ⟳ Ligar à pasta do SharePoint (uma vez) para atualizar sempre a partir do SharePoint.");}
+    else if(!linhas.length) msg(window.__modoLigado?"Carregue em ⟳ Ligar à pasta do SharePoint e escolha a pasta Documents do site PI, sincronizada pelo OneDrive (só da primeira vez). O programa usa o Resize mais recente: o Resize.xlsx ou o último da pasta 2026 › 09 - Cortes.":"Carregue em ⟳ Atualizar com o Excel e escolha o Resize.xlsx (ou arraste-o para aqui).");
     return;
   }
   db.doc("meta/info").onSnapshot(s=>{meta=s.exists?s.data():{};renderMeta();});
