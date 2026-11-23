@@ -648,7 +648,9 @@ async function atualizarLigado(clique){
     ultimoMod=f.lastModified;
     await importar(f);
     copiaDiariaFicheiro(clique);
-    $("#ligadoInfo").textContent="Ligado a "+f.name+" · gravado "+new Date(f.lastModified).toLocaleString("pt-PT",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+    const velho=Date.now()-f.lastModified>3*24*3600*1000;
+    $("#ligadoInfo").innerHTML="Ligado a "+esc(f.name)+" · gravado "+new Date(f.lastModified).toLocaleString("pt-PT",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+(velho?' <b style="color:var(--late)">· ficheiro antigo?</b>':"");
+    if(velho) msg("O Resize.xlsx ligado não muda há mais de 3 dias ("+new Date(f.lastModified).toLocaleDateString("pt-PT")+"). Pode ser uma cópia descarregada. Carregue em «Mudar ficheiro ligado» e escolha o da pasta sincronizada do SharePoint.","bad");
   }catch(e){
     if(e&&e.name==="AbortError") return;
     if(e&&e.name==="NotFoundError"){ficheiroLigado=null;msg("O ficheiro ligado já não existe nesse sítio. Carregue em ⟳ Atualizar e escolha o Resize.xlsx outra vez.","bad");return;}
@@ -664,6 +666,9 @@ async function modoFicheiroLigado(){
   try{pastaCopias=await IDB.get("pastaCopias")||null;}catch(e){pastaCopias=null;}
   mostrarLigar();
   const info=document.createElement("span");info.id="ligadoInfo";info.className="saving";$("#btnSP").before(info);
+  const mudar=document.createElement("button");mudar.type="button";mudar.className="btn";mudar.textContent="Mudar ficheiro ligado";mudar.title="Escolher outro Resize.xlsx (o da pasta sincronizada do SharePoint)";
+  $("#btnSP").after(mudar);
+  mudar.addEventListener("click",async()=>{try{await escolherLigado();ultimoMod=0;await atualizarLigado(true);}catch(e){if(e&&e.name!=="AbortError")msg("Não foi possível ligar: "+(e.message||e),"bad");}});
   if(ficheiroLigado){ info.textContent="Ligado a "+ficheiroLigado.name; setTimeout(()=>atualizarLigado(false),800); }
   setInterval(()=>{ if(document.visibilityState==="visible"&&ficheiroLigado) atualizarLigado(false); },2*60*1000);
   document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"&&ficheiroLigado) atualizarLigado(false); });
