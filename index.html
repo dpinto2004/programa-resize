@@ -93,7 +93,12 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .saving{font-size:13px;color:var(--muted)}
 details.notas{font-size:14px}
 details.notas summary{cursor:pointer;color:var(--muted)}
-details.notas div{display:grid;grid-template-columns:minmax(120px,170px) 1fr;gap:10px;padding:4px 0;border-bottom:1px solid var(--line)}
+.copias{display:grid;gap:6px;padding-top:6px}
+.copias .cp{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;border-bottom:1px solid var(--line);padding:4px 0}
+.copias .cp span{min-width:0}
+.copias .cp button{font:inherit;font-size:13px;padding:4px 10px;border-radius:5px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+.copias .cp button.sim{background:var(--late);border-color:var(--late);color:#fff}
+#notasBody div{display:grid;grid-template-columns:minmax(120px,170px) 1fr;gap:10px;padding:4px 0;border-bottom:1px solid var(--line)}
 @media (max-width:1250px){.list{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media (max-width:1000px){.list{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:760px){
@@ -128,6 +133,7 @@ details.notas div{display:grid;grid-template-columns:minmax(120px,170px) 1fr;gap
   <div id="out"><div class="empty">A carregar…</div></div>
 
   <details class="notas" id="notas" hidden><summary>Notas de corte</summary><div id="notasBody"></div></details>
+  <details class="notas" id="copias"><summary>Cópias de segurança diárias</summary><div id="copiasBody" class="copias"><p class="saving">A carregar…</p></div></details>
   <datalist id="prestadores"></datalist>
 </div>
 
@@ -273,7 +279,18 @@ async function guardar(id,patch){
   try{await db.doc("linhas/"+id).update(patch);$("#saving").textContent="Guardado";setTimeout(()=>$("#saving").textContent="",1500);}
   catch(e){$("#saving").textContent="";if(e.code==="invalid_argument"){canWrite=false;render();msg("Só tem acesso de leitura.","bad");}else msg("Não foi possível guardar. Tente de novo.","bad");}
 }
-$("#out").addEventListener("change",e=>{const el=e.target,k=el.dataset.k;if(!k)return;guardar(el.closest(".row").dataset.id,{[k]:el.value.trim()});});
+$("#out").addEventListener("change",async e=>{
+  const el=e.target,k=el.dataset.k;if(!k)return;
+  const id=el.closest(".row").dataset.id,v=el.value.trim(),r=linhas.find(x=>x.id===id);
+  if(k==="dataPrevista"&&window.__modoLigado&&ficheiroLigado&&r){
+    $("#saving").textContent="A gravar no Excel…";
+    try{await gravarX(r.folha,null,v);guardar(id,{[k]:v});msg(r.folha+": data prevista "+(v?v.split("-").reverse().join("/"):"apagada")+" gravada no "+ficheiroLigado.name+" (coluna U).","ok");}
+    catch(err){const bl=err&&(err.name==="NoModificationAllowedError"||err.name==="InvalidStateError");msg("Não gravei a data no Excel: "+(bl?"o ficheiro está aberto no Excel deste computador. Feche-o e tente de novo.":(err.message||err)),"bad");el.value=r.dataPrevista||"";}
+    $("#saving").textContent="";
+    return;
+  }
+  guardar(id,{[k]:v});
+});
 function toggle(id){aberto.has(id)?aberto.delete(id):aberto.add(id);render();}
 $("#out").addEventListener("click",e=>{
   const row=e.target.closest(".row");if(!row) return;
@@ -502,8 +519,9 @@ function txtCelula(c,ss){
   if(t==="inlineStr"){return [...c.getElementsByTagNameNS(NS,"t")].map(x=>x.textContent).join("");}
   const v=c.getElementsByTagNameNS(NS,"v")[0];return v?v.textContent:"";
 }
-async function gravarX(folha,texto){
+async function gravarX(folha,texto,dataISO){
   if(!window.JSZip) throw new Error("falta o componente para gravar o Excel");
+  await copiaDiariaFicheiro(true);
   let perm=await ficheiroLigado.queryPermission({mode:"readwrite"});
   if(perm!=="granted") perm=await ficheiroLigado.requestPermission({mode:"readwrite"});
   if(perm!=="granted") throw new Error("não foi dada autorização para gravar no "+ficheiroLigado.name);
@@ -525,7 +543,15 @@ async function gravarX(folha,texto){
   }
   const xml=P.parseFromString(await zip.file(caminho).async("string"),"application/xml");
   const rows=[...xml.getElementsByTagNameNS(NS,"row")];
-  let linha=null,estiloCSP1=null,estiloPrest=null;
+  /* cor de fundo de cada estilo (para escolher o verde e o amarelo certos) */
+  let corEstilo=()=>"";
+  if(zip.file("xl/styles.xml")){
+    const st=P.parseFromString(await zip.file("xl/styles.xml").async("string"),"application/xml");
+    const fills=[...(st.getElementsByTagNameNS(NS,"fills")[0]||st).getElementsByTagNameNS(NS,"fill")].map(f=>{const fg=f.getElementsByTagNameNS(NS,"fgColor")[0];return fg?(fg.getAttribute("rgb")||""):"";});
+    const xfs=[...((st.getElementsByTagNameNS(NS,"cellXfs")[0])||st).getElementsByTagNameNS(NS,"xf")];
+    corEstilo=sIdx=>{const x=xfs[Number(sIdx)];return x?String(fills[Number(x.getAttribute("fillId"))]||"").toUpperCase():"";};
+  }
+  let linha=null,estiloCSP1=null,estiloPrest=null,estiloData=null;
   const alvoFolha=folha.trim().toLowerCase().replace(/\s+/g," ");
   for(const r of rows){
     const n=r.getAttribute("r");
@@ -533,31 +559,50 @@ async function gravarX(folha,texto){
     const cC=cs.find(c=>c.getAttribute("r")==="C"+n), cX=cs.find(c=>c.getAttribute("r")==="X"+n);
     const ehFolha=/^folha\s*\d+/i.test(txtCelula(cC,ss).trim());
     const vx=ehFolha?txtCelula(cX,ss).trim().toUpperCase():"";
-    if(cX&&vx==="CSP1"&&!estiloCSP1) estiloCSP1=cX.getAttribute("s");
-    if(cX&&vx==="PRESTADOR"&&!estiloPrest) estiloPrest=cX.getAttribute("s");
+    if(cX&&vx==="CSP1"&&(!estiloCSP1||(/92D050$/.test(corEstilo(cX.getAttribute("s")))&&!/92D050$/.test(corEstilo(estiloCSP1))))) estiloCSP1=cX.getAttribute("s");
+    if(cX&&vx==="PRESTADOR"&&(!estiloPrest||(/FFFF00$/.test(corEstilo(cX.getAttribute("s")))&&!/FFFF00$/.test(corEstilo(estiloPrest))))) estiloPrest=cX.getAttribute("s");
+    const cU=cs.find(c=>c.getAttribute("r")==="U"+n);
+    if(ehFolha&&cU&&!estiloData&&cU.getAttribute("s")&&cU.getElementsByTagNameNS(NS,"v")[0]&&!cU.getAttribute("t")) estiloData=cU.getAttribute("s");
     if(txtCelula(cC,ss).trim().toLowerCase().replace(/\s+/g," ")===alvoFolha) linha=r;
   }
   if(!linha) throw new Error("não encontrei a "+folha+" na folha Schedule (Resize)");
-  const n=linha.getAttribute("r"), ref="X"+n;
-  let cX=[...linha.getElementsByTagNameNS(NS,"c")].find(c=>c.getAttribute("r")===ref);
-  if(!cX){
-    cX=xml.createElementNS(NS,"c");cX.setAttribute("r",ref);
-    const depois=[...linha.getElementsByTagNameNS(NS,"c")].find(c=>colNum(c.getAttribute("r"))>24);
-    depois?linha.insertBefore(cX,depois):linha.appendChild(cX);
-    const sp=linha.getAttribute("spans");
-    if(sp){const [a,b]=sp.split(":").map(Number);if(b<24)linha.setAttribute("spans",a+":24");}
+  const n=linha.getAttribute("r");
+  const celula=(col,idx)=>{
+    const ref=col+n;let c=[...linha.getElementsByTagNameNS(NS,"c")].find(x=>x.getAttribute("r")===ref);
+    if(!c){
+      c=xml.createElementNS(NS,"c");c.setAttribute("r",ref);
+      const depois=[...linha.getElementsByTagNameNS(NS,"c")].find(x=>colNum(x.getAttribute("r"))>idx);
+      depois?linha.insertBefore(c,depois):linha.appendChild(c);
+      const sp=linha.getAttribute("spans");
+      if(sp){const [a,b]=sp.split(":").map(Number);if(b<idx)linha.setAttribute("spans",a+":"+idx);}
+    }
+    while(c.firstChild) c.removeChild(c.firstChild);
+    return c;
+  };
+  let estilo=true;
+  if(texto){
+    const cX=celula("X",24);
+    cX.setAttribute("t","inlineStr");
+    const is=xml.createElementNS(NS,"is"),t=xml.createElementNS(NS,"t");t.textContent=texto;is.appendChild(t);cX.appendChild(is);
+    estilo=texto==="CSP1"?estiloCSP1:estiloPrest;
+    if(estilo!=null) cX.setAttribute("s",estilo);
   }
-  while(cX.firstChild) cX.removeChild(cX.firstChild);
-  cX.setAttribute("t","inlineStr");
-  const is=xml.createElementNS(NS,"is"),t=xml.createElementNS(NS,"t");t.textContent=texto;is.appendChild(t);cX.appendChild(is);
-  const estilo=texto==="CSP1"?estiloCSP1:estiloPrest;
-  if(estilo!=null) cX.setAttribute("s",estilo);
+  if(dataISO!==undefined){
+    const cU=celula("U",21);
+    cU.removeAttribute("t");
+    if(dataISO){
+      const [y,m,d]=dataISO.split("-").map(Number);
+      const serie=(Date.UTC(y,m-1,d)-Date.UTC(1899,11,30))/86400000;
+      const v=xml.createElementNS(NS,"v");v.textContent=String(serie);cU.appendChild(v);
+      if(!cU.getAttribute("s")&&estiloData) cU.setAttribute("s",estiloData);
+    }
+  }
   zip.file(caminho,new XMLSerializer().serializeToString(xml));
   const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
   const w=await ficheiroLigado.createWritable();
   await w.write(blob);await w.close();
   const novo=await ficheiroLigado.getFile();ultimoMod=novo.lastModified;
-  return estilo!=null;
+  return estilo!=null&&estilo!==undefined;
 }
 async function gravarEAtualizar(id,patch,texto,okMsg){
   const r=linhas.find(x=>x.id===id);if(!r) return;
@@ -602,6 +647,7 @@ async function atualizarLigado(clique){
     if(!clique&&f.lastModified===ultimoMod) return;
     ultimoMod=f.lastModified;
     await importar(f);
+    copiaDiariaFicheiro(clique);
     $("#ligadoInfo").textContent="Ligado a "+f.name+" · gravado "+new Date(f.lastModified).toLocaleString("pt-PT",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
   }catch(e){
     if(e&&e.name==="AbortError") return;
@@ -615,12 +661,80 @@ async function modoFicheiroLigado(){
   window.__modoLigado=true;
   $("#btnSP").hidden=false;
   try{ficheiroLigado=await IDB.get("ficheiro")||null;}catch(e){ficheiroLigado=null;}
+  try{pastaCopias=await IDB.get("pastaCopias")||null;}catch(e){pastaCopias=null;}
   mostrarLigar();
   const info=document.createElement("span");info.id="ligadoInfo";info.className="saving";$("#btnSP").before(info);
   if(ficheiroLigado){ info.textContent="Ligado a "+ficheiroLigado.name; setTimeout(()=>atualizarLigado(false),800); }
   setInterval(()=>{ if(document.visibilityState==="visible"&&ficheiroLigado) atualizarLigado(false); },2*60*1000);
   document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"&&ficheiroLigado) atualizarLigado(false); });
 }
+/* ---------- Cópias de segurança diárias ---------- */
+const MAX_COPIAS=30;
+let confRestaurar=null;
+async function copiaDiariaDB(){
+  if(!db||!canWrite||!linhas.length) return;
+  const id=hoje(),ref=db.doc("backups/"+id);
+  try{
+    const ex=await ref.get();
+    if(ex.exists) return;
+    const ls=linhas.map(x=>{const y={...x};return y;});
+    await ref.set({data:id,criadoEm:new Date().toISOString(),semana:meta.semana||"",meta:{semana:meta.semana||"",nota:meta.nota||"",notas:meta.notas||[]},linhas:ls});
+    const todas=await db.collection("backups").orderBy("data","desc").get();
+    for(const d of todas.docs.slice(MAX_COPIAS)) await db.doc("backups/"+d.id).delete();
+  }catch(e){console.warn("cópia diária",e);}
+}
+async function listarCopias(){
+  const box=$("#copiasBody");
+  if(db){
+    try{
+      const s=await db.collection("backups").orderBy("data","desc").limit(MAX_COPIAS).get();
+      if(s.empty){box.innerHTML=`<p class="saving">Ainda não há cópias. A primeira é feita automaticamente hoje.</p>`;return;}
+      box.innerHTML=`<p class="saving">Uma cópia por dia dos dados do programa (últimos ${MAX_COPIAS} dias). O Resize.xlsx também tem o histórico de versões do SharePoint.</p>`+s.docs.map(d=>{const v=d.data();const n=(v.linhas||[]).length,r=(v.linhas||[]).filter(x=>x.terminado).length;
+        return `<div class="cp" data-cp="${esc(d.id)}"><span><b>${dt(v.data)}</b> · ${esc(v.semana||"")} · ${n} folhas (${r} recebidas)</span>${canWrite?(confRestaurar===d.id?`<span>Substituir os dados atuais por esta cópia?</span><button type="button" class="sim" data-rest-ok>Sim, restaurar</button><button type="button" data-rest-no>Cancelar</button>`:`<button type="button" data-rest>Restaurar</button>`):""}</div>`;}).join("");
+    }catch(e){box.innerHTML=`<p class="saving">Não foi possível ler as cópias.</p>`;}
+  } else if(window.__modoLigado){
+    box.innerHTML=pastaCopias
+      ?`<p class="saving">Cópia diária do Resize.xlsx na pasta <b>${esc(pastaCopias.name)}</b> (Resize_AAAA-MM-DD.xlsx, últimos ${MAX_COPIAS} dias).</p><div class="cp"><button type="button" data-pasta>Mudar pasta</button><button type="button" data-copia-agora>Fazer cópia agora</button></div>`
+      :`<p class="saving">Escolha uma pasta (de preferência no OneDrive) para guardar uma cópia diária do Resize.xlsx.</p><div class="cp"><button type="button" data-pasta>Escolher pasta das cópias</button></div>`;
+  } else box.innerHTML=`<p class="saving">As cópias diárias funcionam no link do claude.ai e na versão ligada ao Resize.xlsx.</p>`;
+}
+async function restaurarCopia(id){
+  const d=await db.doc("backups/"+id).get();if(!d.exists) return;
+  const v=d.data();msg("A restaurar a cópia de "+dt(v.data)+"…");
+  const ids=new Set((v.linhas||[]).map(x=>x.id));
+  for(const x of linhas) if(!ids.has(x.id)) await db.doc("linhas/"+x.id).delete();
+  for(const x of v.linhas||[]){const y={...x};delete y.id;await db.doc("linhas/"+x.id).set(y);}
+  if(v.meta) await db.doc("meta/info").set(v.meta);
+  msg("Cópia de "+dt(v.data)+" restaurada. Atenção: a próxima atualização do SharePoint volta a aplicar o que está no Excel.","ok");
+}
+$("#copias").addEventListener("toggle",()=>{ if($("#copias").open) listarCopias(); });
+$("#copiasBody").addEventListener("click",async e=>{
+  const cp=e.target.closest("[data-cp]");
+  if(e.target.closest("[data-rest]")){confRestaurar=cp.dataset.cp;listarCopias();return;}
+  if(e.target.closest("[data-rest-no]")){confRestaurar=null;listarCopias();return;}
+  if(e.target.closest("[data-rest-ok]")){const id=confRestaurar;confRestaurar=null;try{await restaurarCopia(id);}catch(err){msg("Não foi possível restaurar: "+(err.message||err.code),"bad");}listarCopias();return;}
+  if(e.target.closest("[data-pasta]")){try{pastaCopias=await window.showDirectoryPicker({mode:"readwrite"});await IDB.set("pastaCopias",pastaCopias);await copiaDiariaFicheiro(true);}catch(err){if(err.name!=="AbortError")msg("Não foi possível usar essa pasta: "+(err.message||err),"bad");}listarCopias();return;}
+  if(e.target.closest("[data-copia-agora]")){await copiaDiariaFicheiro(true,true);return;}
+});
+/* Versão ligada ao ficheiro: copia o Resize.xlsx uma vez por dia para a pasta escolhida */
+let pastaCopias=null;
+async function copiaDiariaFicheiro(clique,forcar){
+  if(!pastaCopias||!ficheiroLigado) return;
+  try{
+    let p=await pastaCopias.queryPermission({mode:"readwrite"});
+    if(p!=="granted"){ if(!clique) return; p=await pastaCopias.requestPermission({mode:"readwrite"}); }
+    if(p!=="granted") return;
+    const nome="Resize_"+hoje()+".xlsx";
+    if(!forcar){ try{await pastaCopias.getFileHandle(nome);return;}catch(_){} }
+    const f=await ficheiroLigado.getFile();
+    const h=await pastaCopias.getFileHandle(nome,{create:true});
+    const w=await h.createWritable();await w.write(await f.arrayBuffer());await w.close();
+    const nomes=[];for await (const [n] of pastaCopias.entries()) if(/^Resize_\d{4}-\d\d-\d\d\.xlsx$/.test(n)) nomes.push(n);
+    nomes.sort().reverse();for(const n of nomes.slice(MAX_COPIAS)) await pastaCopias.removeEntry(n);
+    if(clique) msg("Cópia de segurança gravada: "+nome+" na pasta "+pastaCopias.name+".","ok");
+  }catch(e){ if(clique) msg("Não foi possível fazer a cópia de segurança: "+(e.message||e),"bad"); }
+}
+
 $("#btnImport").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();$("#file").click();}});
 $("#file").addEventListener("change",e=>{const f=e.target.files[0];importar(f);e.target.value="";});
 document.addEventListener("dragover",e=>{e.preventDefault();document.body.classList.add("drag");});
@@ -651,6 +765,7 @@ document.addEventListener("drop",e=>{e.preventDefault();document.body.classList.
   db.doc("meta/info").onSnapshot(s=>{meta=s.exists?s.data():{};renderMeta();});
   db.collection("linhas").orderBy("ordem").onSnapshot(s=>{
     linhas=s.docs.map(d=>({id:d.id,...d.data()}));
+    if(!window.__copiaFeita&&linhas.length){window.__copiaFeita=true;setTimeout(copiaDiariaDB,3000);}
     const a=document.activeElement;
     if(a&&a.closest&&a.closest("#out")&&a.tagName==="INPUT")return;
     render();
